@@ -1,0 +1,22 @@
+services:
+  opcua:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "4840:4840"
+
+  bridge:
+    build:
+      context: .
+      dockerfile: Dockerfile.bridge
+    ports:
+      - "8080:8080"
+      - "9000:9000"
+    environment:
+      HTTP_ADDR: ":8080"
+      OPCUA_TCP_BRIDGE_PORT: "9000"
+      OPCUA_ENDPOINT: "opc.tcp://opcua:4840"
+      OPCUA_NAMESPACE_URI: "urn:binary-sensors-demo"
+    depends_on:
+      - opcua

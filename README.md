@@ -53,43 +53,60 @@ cmake --build . --config Release
 
 ## OPC UA TCP Bridge
 
-The project includes a second executable `opcua_tcp_bridge` that connects to the
-OPC UA server as a client and exposes the sensor values as a binary TCP stream.
-This allows multiple TCP clients to receive real-time sensor updates.
+The bridge connects to the OPC UA server as a client and streams sensor values
+over TCP as MessagePack frames (see [PROTOCOL.md](PROTOCOL.md)). Multiple TCP
+clients can subscribe to the same stream.
 
-### Features
+### Go bridge with web UI (recommended)
 
-- **OPC UA client**: Connects to the running `opcua_server` and reads sensor
-  values
-- **TCP server**: Listens on port 9000 (configurable via `OPCUA_TCP_BRIDGE_PORT`
-  env var)
-- **Multi-client support**: Multiple TCP clients can connect simultaneously
-- **Binary protocol**: Compact fixed-size frames with sensor state, sequence
-  numbers, and timestamps
-- **Automatic reconnection**: Handles OPC UA server disconnections with
-  exponential backoff
+The `opcua-bridge` binary (Go) implements the bridge and a built-in web UI for
+browsing the address space, editing sensor mappings, and starting or stopping
+the TCP stream. Configuration JSON is compatible with the former Qt GUI
+(`endpointUrl`, `namespaceUri`, `tcpPort`, `mappings`).
 
-### Build and run
-
-Build both executables:
+**Run locally** (requires Go 1.22+):
 
 ```bash
-cd build
-cmake ..
-cmake --build . --config Release
+go run ./cmd/opcua-bridge
 ```
 
-Run the bridge (ensure `opcua_server` is running first):
+Open the UI at [http://localhost:8080](http://localhost:8080). The MessagePack
+TCP server listens on port **9000** by default (override with
+`OPCUA_TCP_BRIDGE_PORT`).
+
+**Environment variables**:
+
+| Variable | Meaning |
+|----------|---------|
+| `HTTP_ADDR` | HTTP listen address (default `:8080`) |
+| `OPCUA_TCP_BRIDGE_PORT` | TCP port for MessagePack stream (default `9000`) |
+| `CONFIG_PATH` | Optional path to a JSON config file; loaded at startup and written on **Save** from the UI (`PUT /api/config`) |
+| `OPCUA_ENDPOINT` | Default OPC UA endpoint URL (overrides config file) |
+| `OPCUA_NAMESPACE_URI` | Default namespace URI (overrides config file) |
+
+**Docker** (bridge only):
 
 ```bash
-./opcua_tcp_bridge
+docker build -f Dockerfile.bridge -t opcua-tcp-bridge .
+docker run --rm -p 8080:8080 -p 9000:9000 \
+  -e OPCUA_ENDPOINT=opc.tcp://host.docker.internal:4840 \
+  -e OPCUA_NAMESPACE_URI=urn:binary-sensors-demo \
+  opcua-tcp-bridge
 ```
 
-Or specify a custom TCP port:
+**Docker Compose** (demo OPC UA server + bridge on one network):
 
 ```bash
-OPCUA_TCP_BRIDGE_PORT=8080 ./opcua_tcp_bridge
+docker compose up --build
 ```
+
+The UI is on port **8080** and the TCP stream on **9000**; the bridge points at
+`opc.tcp://opcua:4840` by default.
+
+### Legacy Qt GUI and C bridge (deprecated)
+
+The `opcua_tcp_bridge_gui` (Qt 6) and `opcua_tcp_bridge` (C) targets remain in
+CMake for reference only; new development should use the Go bridge above.
 
 ### Connect to the TCP stream
 
@@ -99,40 +116,47 @@ Connect using `netcat` or any TCP client:
 nc localhost 9000
 ```
 
-You'll receive a continuous stream of binary frames. To inspect the raw bytes:
+You'll receive a continuous stream of MessagePack-encoded frames. See
+[PROTOCOL.md](PROTOCOL.md) for the full wire format.
+
+### Check frames from the CLI
+
+**Raw bytes (hex):**
 
 ```bash
 nc localhost 9000 | hexdump -C
 ```
 
-### Binary Protocol Format
+**Decode with msgpack-tools** (macOS/Linux via [Homebrew](https://formulae.brew.sh/formula/msgpack-tools)):
 
-Each frame is exactly 18 bytes with the following structure (big-endian):
-
-| Offset | Size    | Description                                                       |
-| ------ | ------- | ----------------------------------------------------------------- |
-| 0      | 1 byte  | Protocol version (currently `0x01`)                               |
-| 1-8    | 8 bytes | Sequence number (`uint64`, big-endian)                            |
-| 9-16   | 8 bytes | Timestamp in milliseconds since Unix epoch (`uint64`, big-endian) |
-| 17     | 1 byte  | Sensor flags (bits 0-3: Sensor1-Sensor4 boolean values)           |
-
-**Sensor flags byte:**
-
-- Bit 0: Sensor1 value (1 = true, 0 = false)
-- Bit 1: Sensor2 value (1 = true, 0 = false)
-- Bit 2: Sensor3 value (1 = true, 0 = false)
-- Bit 3: Sensor4 value (1 = true, 0 = false)
-- Bits 4-7: Reserved (currently 0)
-
-**Example frame (hex):**
-
+```bash
+brew install msgpack-tools
+nc localhost 9000 | msgpack2json -d
 ```
-01 00 00 00 00 00 00 00 01 00 00 00 00 17 8d 5f 4e 0f
-│  │                    │                    │  │
-│  │                    │                    │  └─ Sensor flags: 0x0F = all sensors true
-│  │                    │                    └──── Timestamp (ms)
-│  │                    └───────────────────────── Sequence: 1
-│  └─────────────────────────────────────────────── Protocol version: 0x01
+
+**Decode and pretty-print each frame** (requires Python 3 and `msgpack`):
+
+```bash
+pip install msgpack
+nc localhost 9000 | python3 -c "
+import sys, json, msgpack
+unpacker = msgpack.Unpacker(sys.stdin.buffer, raw=False)
+for obj in unpacker:
+    print(json.dumps(obj, indent=2))
+"
+```
+
+To print only the first few frames and exit (e.g. 5):
+
+```bash
+nc localhost 9000 | python3 -c "
+import sys, json, msgpack
+unpacker = msgpack.Unpacker(sys.stdin.buffer, raw=False)
+for i, obj in enumerate(unpacker):
+    print(json.dumps(obj, indent=2))
+    if i >= 4:
+        break
+"
 ```
 
 The bridge sends updates approximately every 300ms when sensor values change or

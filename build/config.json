@@ -1,0 +1,37 @@
+{
+    "endpointUrl": "opc.tcp://localhost:4840",
+    "mappings": [
+        {
+            "enabled": true,
+            "messagePackId": "SENSOR_1",
+            "nodeIdString": "ns=2;s=Sensor1",
+            "typeCode": 0
+        },
+        {
+            "enabled": true,
+            "messagePackId": "SENSOR_2",
+            "nodeIdString": "ns=2;s=Sensor2",
+            "typeCode": 0
+        },
+        {
+            "enabled": true,
+            "messagePackId": "SENSOR_3",
+            "nodeIdString": "ns=2;s=Sensor3",
+            "typeCode": 0
+        },
+        {
+            "enabled": false,
+            "messagePackId": "Sensor4",
+            "nodeIdString": "ns=2;s=Sensor4",
+            "typeCode": 0
+        },
+        {
+            "enabled": true,
+            "messagePackId": "SENSOR_3",
+            "nodeIdString": "ns=2;s=Pi1_InductionSwitch1",
+            "typeCode": 0
+        }
+    ],
+    "namespaceUri": "urn:binary-sensors-demo",
+    "tcpPort": 9000
+}

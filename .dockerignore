@@ -1,0 +1,5 @@
+build
+dist
+dist-linux64
+.git
+.DS_Store

@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OPC UA TCP Bridge</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header>
+    <h1>OPC UA → MessagePack TCP Bridge</h1>
+    <p class="muted">Same wire format as <code>PROTOCOL.md</code>. Configure, connect, map nodes, start streaming.</p>
+  </header>
+
+  <section class="card">
+    <h2>Connection</h2>
+    <div class="grid">
+      <label>Endpoint URL <input type="text" id="endpointUrl" /></label>
+      <label>Namespace URI <input type="text" id="namespaceUri" /></label>
+      <label>TCP port <input type="number" id="tcpPort" min="1" max="65535" /></label>
+    </div>
+    <div class="row">
+      <button type="button" id="btnConnect">Connect OPC UA</button>
+      <button type="button" id="btnDisconnect" disabled>Disconnect</button>
+      <button type="button" id="btnStart" disabled>Start bridge</button>
+      <button type="button" id="btnStop" disabled>Stop bridge</button>
+    </div>
+    <div id="statusLine" class="status"></div>
+  </section>
+
+  <section class="card">
+    <h2>Browse address space</h2>
+    <p class="muted">Navigate from Objects (<code>ns=0;i=85</code>). Click a row to open folders; use <strong>Add sensor</strong> on variables.</p>
+    <div class="breadcrumb" id="breadcrumb"></div>
+    <table class="refs">
+      <thead><tr><th>Name</th><th>Class</th><th>Node ID</th><th></th></tr></thead>
+      <tbody id="browseBody"></tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>Sensor mappings</h2>
+    <p class="muted">MessagePack <code>id</code>, OPC UA node id, type code (0=bool … 5=string per PROTOCOL).</p>
+    <div class="row">
+      <button type="button" id="btnAddRow">Add row</button>
+      <button type="button" id="btnSaveConfig">Download config JSON</button>
+      <label class="filebtn">Load config JSON <input type="file" id="fileConfig" accept="application/json" hidden /></label>
+    </div>
+    <table class="mappings">
+      <thead>
+        <tr>
+          <th>On</th>
+          <th>MessagePack id</th>
+          <th>Node id (ns=…;i=… or ns=…;s=…)</th>
+          <th>Type</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="mapBody"></tbody>
+    </table>
+  </section>
+
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -1,96 +1,143 @@
-# Binary Protocol Format for OPC UA TCP Bridge
+# MessagePack Protocol Format for OPC UA TCP Bridge
 
 ## Frame Structure
 
-- **Fixed-size frames**: 18 bytes per frame
-- **Endianness**: All multi-byte integers are **big-endian** (network byte
-  order)
-- **Streaming**: Frames are sent continuously, one after another, with no
-  delimiters
+- **Variable-size frames**: Each frame is a MessagePack-encoded map
+- **Streaming**: Frames are sent continuously, one after another, with no delimiters
+- **Parsing**: Clients must parse MessagePack objects sequentially from the TCP stream
 
-## Byte Layout
+## Message Format
 
-| Offset | Size    | Type   | Description                                                           |
-| ------ | ------- | ------ | --------------------------------------------------------------------- |
-| 0      | 1 byte  | uint8  | Protocol version (currently `0x01`)                                   |
-| 1-8    | 8 bytes | uint64 | Sequence number (monotonically increasing, big-endian)                |
-| 9-16   | 8 bytes | uint64 | Timestamp in milliseconds since Unix epoch (big-endian)               |
-| 17     | 1 byte  | uint8  | Sensor flags byte (bits 0-3 represent Sensor1-Sensor4 boolean values) |
+Each frame is a MessagePack map containing the following top-level fields:
 
-## Sensor Flags Byte (byte 17)
+| Field       | Type           | Description                    |
+|------------|----------------|--------------------------------|
+| version    | byte (uint8)   | Protocol version (currently `0x01`) |
+| sequence   | ulong (uint64) | Monotonic sequence number     |
+| timestampMs| ulong (uint64) | Unix time milliseconds        |
+| sensors    | array of maps  | One entry per sensor          |
 
-- **Bit 0**: Sensor1 value (1 = true, 0 = false)
-- **Bit 1**: Sensor2 value (1 = true, 0 = false)
-- **Bit 2**: Sensor3 value (1 = true, 0 = false)
-- **Bit 3**: Sensor4 value (1 = true, 0 = false)
-- **Bits 4-7**: Reserved (currently always 0)
+## Sensor Entry Format
 
-## Example Frame Decoding
+Each entry in the `sensors` array is a MessagePack map with the following fields:
 
-```
-Raw bytes (hex): 01 00 00 00 00 00 00 00 48 00 00 01 9b ff 6e 6f 6d 0f
+| Field | Type   | Description                                                          |
+|-------|--------|----------------------------------------------------------------------|
+| id    | string | Sensor identifier (e.g. "Sensor1", "Sensor2", "Sensor3", "Sensor4") |
+| type  | byte (uint8) | Type code: 0=bool, 1=int32, 2=int64, 3=float32, 4=float64, 5=string |
+| value | (any)  | MessagePack value matching the type (bool, int, float, string)      |
 
-Byte 0:   0x01 = Protocol version 1
-Bytes 1-8: 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x48 = Sequence number 72
-Bytes 9-16: 0x00 0x00 0x01 0x9b 0xff 0x6e 0x6f 0x6d = Timestamp 1769516986221 ms
-Byte 17:   0x0f = Binary 00001111 = All 4 sensors are true
+### Type Codes
+
+- `0`: Boolean (`true` or `false`)
+- `1`: Signed 32-bit integer
+- `2`: Signed 64-bit integer
+- `3`: IEEE 754 single-precision float (32-bit)
+- `4`: IEEE 754 double-precision float (64-bit)
+- `5`: UTF-8 string
+
+## Current Implementation
+
+The reference bridge is the **Go** service (`opcua-bridge`): it maps configured
+OPC UA variables to `sensors[]` entries (`id`, `type`, `value`) as described
+above. The legacy C demo bridge sent fixed boolean sensors (`Sensor1`–`Sensor4`);
+configurable mappings are the norm for the Go bridge.
+
+## Example Frame Structure
+
+```json
+{
+  "version": 1,
+  "sequence": 72,
+  "timestampMs": 1769516986221,
+  "sensors": [
+    {
+      "id": "Sensor1",
+      "type": 0,
+      "value": true
+    },
+    {
+      "id": "Sensor2",
+      "type": 0,
+      "value": true
+    },
+    {
+      "id": "Sensor3",
+      "type": 0,
+      "value": true
+    },
+    {
+      "id": "Sensor4",
+      "type": 0,
+      "value": true
+    }
+  ]
+}
 ```
 
 ## Decoding Pseudocode
 
 ```python
-def decode_frame(buffer):
-    if len(buffer) < 18:
-        raise ValueError("Frame too short")
+import msgpack
+
+def decode_frame(stream):
+    unpacker = msgpack.Unpacker(stream)
+    frame = unpacker.unpack()
     
-    version = buffer[0]
-    seq = int.from_bytes(buffer[1:9], byteorder='big')
-    timestamp_ms = int.from_bytes(buffer[9:17], byteorder='big')
-    flags = buffer[17]
+    version = frame[b'version']
+    sequence = frame[b'sequence']
+    timestamp_ms = frame[b'timestampMs']
+    sensors = frame[b'sensors']
     
-    sensor1 = (flags & 0x01) != 0
-    sensor2 = (flags & 0x02) != 0
-    sensor3 = (flags & 0x04) != 0
-    sensor4 = (flags & 0x08) != 0
-    
-    return {
+    result = {
         'version': version,
-        'sequence': seq,
+        'sequence': sequence,
         'timestamp_ms': timestamp_ms,
-        'sensor1': sensor1,
-        'sensor2': sensor2,
-        'sensor3': sensor3,
-        'sensor4': sensor4
+        'sensors': []
     }
+    
+    for sensor in sensors:
+        sensor_entry = {
+            'id': sensor[b'id'].decode('utf-8'),
+            'type': sensor[b'type'],
+            'value': sensor[b'value']
+        }
+        result['sensors'].append(sensor_entry)
+    
+    return result
 ```
 
-## Big-Endian uint64 Decoding
-
-For languages without built-in big-endian conversion:
+## C Decoding Example (msgpack-c)
 
 ```c
-uint64_t value = ((uint64_t)buffer[0] << 56) |
-                 ((uint64_t)buffer[1] << 48) |
-                 ((uint64_t)buffer[2] << 40) |
-                 ((uint64_t)buffer[3] << 32) |
-                 ((uint64_t)buffer[4] << 24) |
-                 ((uint64_t)buffer[5] << 16) |
-                 ((uint64_t)buffer[6] << 8) |
-                 (uint64_t)buffer[7];
+#include <msgpack.h>
+
+msgpack_unpacked result;
+msgpack_unpacked_init(&result);
+msgpack_unpack_return ret = msgpack_unpack_next(&result, data, size, NULL);
+
+if(ret == MSGPACK_UNPACK_SUCCESS) {
+    msgpack_object obj = result.data;
+    if(obj.type == MSGPACK_OBJECT_MAP) {
+        // Access map fields: obj.via.map.ptr[i].key and obj.via.map.ptr[i].val
+    }
+}
+msgpack_unpacked_destroy(&result);
 ```
 
 ## Important Notes
 
-- Frames are sent continuously; read 18-byte chunks from the TCP stream
+- Frames are sent continuously; clients must parse MessagePack objects sequentially from the TCP stream
 - The timestamp is **milliseconds** since Unix epoch (not seconds)
 - Sequence numbers increment with each frame sent
-- Multiple frames may arrive in a single TCP read; parse sequentially
+- Multiple frames may arrive in a single TCP read; parse MessagePack objects sequentially
 - The protocol sends updates approximately every 300ms when sensor values change
 - Timestamp represents milliseconds since January 1, 1970 00:00:00 UTC
+- The schema is extensible: future sensors can use different types (int32, float64, string, etc.) without changing the wire format
 
 ## Connection Details
 
-- **Default TCP port**: 9000 (configurable via `OPCUA_TCP_BRIDGE_PORT`
-  environment variable)
-- **Protocol**: Raw TCP stream
-- **No handshake**: Connect and immediately start receiving frames
+- **Default TCP port**: 9000 (configurable via `OPCUA_TCP_BRIDGE_PORT` environment variable)
+- **Protocol**: Raw TCP stream with MessagePack-encoded frames
+- **No handshake**: Connect and immediately start receiving MessagePack frames
+- **Frame boundaries**: Clients must use a streaming MessagePack parser that can decode one complete MessagePack object at a time from the stream

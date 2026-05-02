@@ -16,11 +16,16 @@
 #include <open62541/client_config_default.h>
 #include <open62541/client_highlevel.h>
 
-#define SENSOR_COUNT 4
+#include <msgpack.h>
+
+#define SENSOR_COUNT 5
 #define DEFAULT_TCP_PORT 9000
+
+static const char *const SENSOR_BROWSE_NAMES[SENSOR_COUNT] = {
+    "Sensor1", "Sensor2", "Sensor3", "Sensor4", "Pi1_InductionSwitch1"
+};
 #define UPDATE_INTERVAL_MS 300
 #define MAX_CLIENTS 32
-#define FRAME_SIZE 18
 
 #define PROTOCOL_VERSION 0x01
 
@@ -49,59 +54,67 @@ static uint64_t
 getTimestampMs(void) {
     struct timeval tv;
     gettimeofday(&tv, NULL);
-    uint64_t result = (uint64_t)tv.tv_sec * 1000ULL + (uint64_t)tv.tv_usec / 1000ULL;
-    // #region agent log
-    FILE *log = fopen("/Users/jan/Dev/opcua-server-hs-bochum/.cursor/debug.log", "a");
-    if(log) {
-        fprintf(log, "{\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"A\",\"location\":\"opcua_tcp_bridge.c:52\",\"message\":\"getTimestampMs calculation\",\"data\":{\"tv_sec\":%ld,\"tv_usec\":%ld,\"result_ms\":%llu},\"timestamp\":%llu}\n",
-                (long)tv.tv_sec, (long)tv.tv_usec, (unsigned long long)result, (unsigned long long)result);
-        fclose(log);
-    }
-    // #endregion
-    return result;
-}
-
-static void
-writeUint64BE(uint8_t *buf, uint64_t value) {
-    buf[0] = (uint8_t)((value >> 56) & 0xFF);
-    buf[1] = (uint8_t)((value >> 48) & 0xFF);
-    buf[2] = (uint8_t)((value >> 40) & 0xFF);
-    buf[3] = (uint8_t)((value >> 32) & 0xFF);
-    buf[4] = (uint8_t)((value >> 24) & 0xFF);
-    buf[5] = (uint8_t)((value >> 16) & 0xFF);
-    buf[6] = (uint8_t)((value >> 8) & 0xFF);
-    buf[7] = (uint8_t)(value & 0xFF);
+    return (uint64_t)tv.tv_sec * 1000ULL + (uint64_t)tv.tv_usec / 1000ULL;
 }
 
 static size_t
 encodeFrame(const SensorSnapshot *snap, uint8_t *buf, size_t bufSize) {
-    if(bufSize < FRAME_SIZE) {
-        return 0;
-    }
-
-    buf[0] = PROTOCOL_VERSION;
-    writeUint64BE(&buf[1], snap->seq);
-    writeUint64BE(&buf[9], snap->timestampMs);
-    // #region agent log
-    FILE *log = fopen("/Users/jan/Dev/opcua-server-hs-bochum/.cursor/debug.log", "a");
-    if(log) {
-        fprintf(log, "{\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"B,C\",\"location\":\"opcua_tcp_bridge.c:75\",\"message\":\"After writeUint64BE timestamp\",\"data\":{\"timestampMs\":%llu,\"bytes\":[%u,%u,%u,%u,%u,%u,%u,%u]},\"timestamp\":%llu}\n", 
-                (unsigned long long)snap->timestampMs,
-                buf[9], buf[10], buf[11], buf[12], buf[13], buf[14], buf[15], buf[16],
-                (unsigned long long)getTimestampMs());
-        fclose(log);
-    }
-    // #endregion
-
-    uint8_t flags = 0;
+    msgpack_sbuffer sbuf;
+    msgpack_sbuffer_init(&sbuf);
+    
+    msgpack_packer pk;
+    msgpack_packer_init(&pk, &sbuf, msgpack_sbuffer_write);
+    
+    msgpack_pack_map(&pk, 4);
+    
+    msgpack_pack_str(&pk, 7);
+    msgpack_pack_str_body(&pk, "version", 7);
+    msgpack_pack_uint8(&pk, PROTOCOL_VERSION);
+    
+    msgpack_pack_str(&pk, 8);
+    msgpack_pack_str_body(&pk, "sequence", 8);
+    msgpack_pack_uint64(&pk, snap->seq);
+    
+    msgpack_pack_str(&pk, 11);
+    msgpack_pack_str_body(&pk, "timestampMs", 11);
+    msgpack_pack_uint64(&pk, snap->timestampMs);
+    
+    msgpack_pack_str(&pk, 7);
+    msgpack_pack_str_body(&pk, "sensors", 7);
+    msgpack_pack_array(&pk, SENSOR_COUNT);
+    
     for(size_t i = 0; i < SENSOR_COUNT; ++i) {
+        const char *sensorName = SENSOR_BROWSE_NAMES[i];
+        size_t nameLen = strlen(sensorName);
+        
+        msgpack_pack_map(&pk, 3);
+        
+        msgpack_pack_str(&pk, 2);
+        msgpack_pack_str_body(&pk, "id", 2);
+        msgpack_pack_str(&pk, nameLen);
+        msgpack_pack_str_body(&pk, sensorName, nameLen);
+        
+        msgpack_pack_str(&pk, 4);
+        msgpack_pack_str_body(&pk, "type", 4);
+        msgpack_pack_uint8(&pk, 0);
+        
+        msgpack_pack_str(&pk, 5);
+        msgpack_pack_str_body(&pk, "value", 5);
         if(snap->values[i]) {
-            flags |= (1U << i);
+            msgpack_pack_true(&pk);
+        } else {
+            msgpack_pack_false(&pk);
         }
     }
-    buf[17] = flags;
-
-    return FRAME_SIZE;
+    
+    size_t result = 0;
+    if(sbuf.size <= bufSize) {
+        memcpy(buf, sbuf.data, sbuf.size);
+        result = sbuf.size;
+    }
+    
+    msgpack_sbuffer_destroy(&sbuf);
+    return result;
 }
 
 static int
@@ -194,8 +207,11 @@ browseToNode(UA_Client *client, const UA_NodeId *startNodeId,
                         name[ref->browseName.name.length] = '\0';
                         
                         if(strcmp(name, browseName) == 0) {
-                            *outNodeId = ref->nodeId.nodeId;
+                            UA_NodeId_copy(&ref->nodeId.nodeId, outNodeId);
                             UA_free(name);
+                            UA_free(bReq.nodesToBrowse);
+                            bReq.nodesToBrowse = NULL;
+                            bReq.nodesToBrowseSize = 0;
                             UA_BrowseRequest_clear(&bReq);
                             UA_BrowseResponse_clear(&bResp);
                             return UA_STATUSCODE_GOOD;
@@ -207,6 +223,9 @@ browseToNode(UA_Client *client, const UA_NodeId *startNodeId,
         }
     }
 
+    UA_free(bReq.nodesToBrowse);
+    bReq.nodesToBrowse = NULL;
+    bReq.nodesToBrowseSize = 0;
     UA_BrowseRequest_clear(&bReq);
     UA_BrowseResponse_clear(&bResp);
     return UA_STATUSCODE_BADNOTFOUND;
@@ -224,13 +243,6 @@ readSensors(UA_Client *client, UA_UInt16 nsIdx, UA_NodeId *sensorNodeIds, Sensor
     
     out->seq = ++seqCounter;
     out->timestampMs = getTimestampMs();
-    // #region agent log
-    FILE *log = fopen("/Users/jan/Dev/opcua-server-hs-bochum/.cursor/debug.log", "a");
-    if(log) {
-        fprintf(log, "{\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"A\",\"location\":\"opcua_tcp_bridge.c:207\",\"message\":\"Timestamp before encoding\",\"data\":{\"timestampMs\":%llu,\"seq\":%llu},\"timestamp\":%llu}\n", (unsigned long long)out->timestampMs, (unsigned long long)out->seq, (unsigned long long)getTimestampMs());
-        fclose(log);
-    }
-    // #endregion
 
     for(size_t i = 0; i < SENSOR_COUNT; ++i) {
         UA_Variant value;
@@ -260,11 +272,10 @@ static UA_StatusCode
 connectToServer(UA_Client *client, const char *endpointUrl) {
     UA_StatusCode retval = UA_Client_connect(client, endpointUrl);
     if(retval != UA_STATUSCODE_GOOD) {
-        fprintf(stderr, "Failed to connect to %s: %s\n", 
+        fprintf(stderr, "Failed to connect to %s: %s\n",
                 endpointUrl, UA_StatusCode_name(retval));
         return retval;
     }
-    
     fprintf(stderr, "Connected to OPC UA server at %s\n", endpointUrl);
     return UA_STATUSCODE_GOOD;
 }
@@ -359,6 +370,9 @@ int main(void) {
 
     UA_UInt16 nsIdx = UA_UINT16_MAX;
     UA_NodeId sensorNodeIds[SENSOR_COUNT];
+    for(size_t i = 0; i < SENSOR_COUNT; ++i) {
+        UA_NodeId_init(&sensorNodeIds[i]);
+    }
     bool sensorNodeIdsResolved = false;
     uint64_t lastUpdateMs = 0;
     uint64_t reconnectBackoffMs = 1000;
@@ -389,11 +403,11 @@ int main(void) {
                         if(retval == UA_STATUSCODE_GOOD) {
                             sensorNodeIdsResolved = true;
                             for(size_t i = 0; i < SENSOR_COUNT; ++i) {
-                                char nameBuf[32];
-                                snprintf(nameBuf, sizeof(nameBuf), "Sensor%zu", i + 1);
-                                retval = browseToNode(client, &sensorsFolderId, nsIdx, nameBuf, UA_NODECLASS_VARIABLE, &sensorNodeIds[i]);
+                                UA_NodeId_clear(&sensorNodeIds[i]);
+                                const char *browseName = SENSOR_BROWSE_NAMES[i];
+                                retval = browseToNode(client, &sensorsFolderId, nsIdx, browseName, UA_NODECLASS_VARIABLE, &sensorNodeIds[i]);
                                 if(retval != UA_STATUSCODE_GOOD) {
-                                    fprintf(stderr, "Failed to find %s\n", nameBuf);
+                                    fprintf(stderr, "Failed to find %s\n", browseName);
                                     sensorNodeIdsResolved = false;
                                     break;
                                 }
@@ -401,7 +415,9 @@ int main(void) {
                             if(sensorNodeIdsResolved) {
                                 fprintf(stderr, "Resolved all sensor node IDs\n");
                                 reconnectBackoffMs = 1000;
-                            } else {
+                            }
+                            UA_NodeId_clear(&sensorsFolderId);
+                            if(!sensorNodeIdsResolved) {
                                 reconnectBackoffMs = (reconnectBackoffMs < 10000) ? 
                                                      reconnectBackoffMs * 2 : 10000;
                             }
@@ -477,19 +493,9 @@ int main(void) {
             SensorSnapshot snapshot;
             UA_StatusCode retval = readSensors(client, nsIdx, sensorNodeIds, &snapshot);
             if(retval == UA_STATUSCODE_GOOD) {
-                uint8_t frame[FRAME_SIZE];
+                uint8_t frame[512];
                 size_t frameLen = encodeFrame(&snapshot, frame, sizeof(frame));
                 if(frameLen > 0) {
-                    // #region agent log
-                    FILE *log = fopen("/Users/jan/Dev/opcua-server-hs-bochum/.cursor/debug.log", "a");
-                    if(log) {
-                        fprintf(log, "{\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"D\",\"location\":\"opcua_tcp_bridge.c:457\",\"message\":\"Frame before broadcast\",\"data\":{\"timestampBytes\":[%u,%u,%u,%u,%u,%u,%u,%u],\"offset9to16\":\"0x%02x%02x%02x%02x%02x%02x%02x%02x\"},\"timestamp\":%llu}\n",
-                                frame[9], frame[10], frame[11], frame[12], frame[13], frame[14], frame[15], frame[16],
-                                frame[9], frame[10], frame[11], frame[12], frame[13], frame[14], frame[15], frame[16],
-                                (unsigned long long)getTimestampMs());
-                        fclose(log);
-                    }
-                    // #endregion
                     broadcastFrame(frame, frameLen);
                 }
             }

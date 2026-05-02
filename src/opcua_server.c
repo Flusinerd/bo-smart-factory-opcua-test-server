@@ -5,13 +5,14 @@
 #include <open62541/server.h>
 #include <open62541/server_config_default.h>
 
-#define SENSOR_COUNT    4
+#define SENSOR_COUNT    5
 #define SIM_INTERVAL_MS 1000.0
 
 typedef struct {
     UA_NodeId nodeId;
     UA_Boolean value;
     UA_Boolean overridden;
+    UA_Boolean exemptFromSimulation;
 } SensorState;
 
 typedef struct {
@@ -80,6 +81,9 @@ simulationEnabledWriteCallback(UA_Server *server,
     if(!*incoming) {
         for(size_t i = 0; i < SENSOR_COUNT; ++i) {
             SensorState *state = &ctx->sensors[i];
+            if(state->exemptFromSimulation) {
+                continue;
+            }
             state->value = UA_FALSE;
             state->overridden = UA_FALSE;
 
@@ -91,6 +95,9 @@ simulationEnabledWriteCallback(UA_Server *server,
         }
     } else {
         for(size_t i = 0; i < SENSOR_COUNT; ++i) {
+            if(ctx->sensors[i].exemptFromSimulation) {
+                continue;
+            }
             ctx->sensors[i].overridden = UA_FALSE;
         }
     }
@@ -104,7 +111,7 @@ addSensorsFolder(UA_Server *server, UA_UInt16 nsIdx, UA_NodeId *outFolderId) {
     UA_NodeId folderId;
     UA_StatusCode retval = UA_Server_addObjectNode(
         server,
-        UA_NODEID_NULL,
+        UA_NODEID_STRING(nsIdx, "Sensors"),
         UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER),
         UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES),
         UA_QUALIFIEDNAME(nsIdx, "Sensors"),
@@ -125,14 +132,28 @@ addSensorVariable(UA_Server *server,
                   SensorContext *ctx,
                   size_t index,
                   UA_UInt16 nsIdx,
-                  const UA_NodeId *parentFolderId) {
-    char nameBuf[32];
-    snprintf(nameBuf, sizeof(nameBuf), "Sensor%zu", index + 1);
+                  const UA_NodeId *parentFolderId,
+                  const char *browseName,
+                  const char *displayName,
+                  UA_Boolean exemptFromSimulation) {
+    char nameBuf[64];
+    if(browseName) {
+        snprintf(nameBuf, sizeof(nameBuf), "%s", browseName);
+    } else {
+        snprintf(nameBuf, sizeof(nameBuf), "Sensor%zu", index + 1);
+    }
+
+    char displayBuf[64];
+    if(displayName) {
+        snprintf(displayBuf, sizeof(displayBuf), "%s", displayName);
+    } else {
+        snprintf(displayBuf, sizeof(displayBuf), "%s", nameBuf);
+    }
 
     UA_VariableAttributes vAttr = UA_VariableAttributes_default;
     UA_Boolean initial = UA_FALSE;
     UA_Variant_setScalar(&vAttr.value, &initial, &UA_TYPES[UA_TYPES_BOOLEAN]);
-    vAttr.displayName = UA_LOCALIZEDTEXT("en-US", nameBuf);
+    vAttr.displayName = UA_LOCALIZEDTEXT("en-US", displayBuf);
     vAttr.description = UA_LOCALIZEDTEXT("en-US", "Binary sensor");
     vAttr.dataType = UA_TYPES[UA_TYPES_BOOLEAN].typeId;
     vAttr.accessLevel =
@@ -143,7 +164,7 @@ addSensorVariable(UA_Server *server,
     UA_NodeId nodeId;
     UA_StatusCode retval = UA_Server_addVariableNode(
         server,
-        UA_NODEID_NULL,
+        UA_NODEID_STRING(nsIdx, nameBuf),
         *parentFolderId,
         UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES),
         UA_QUALIFIEDNAME(nsIdx, nameBuf),
@@ -160,6 +181,7 @@ addSensorVariable(UA_Server *server,
     state->nodeId = nodeId;
     state->value = initial;
     state->overridden = UA_FALSE;
+    state->exemptFromSimulation = exemptFromSimulation;
 
     UA_Server_setNodeContext(server, nodeId, state);
 
@@ -191,7 +213,7 @@ addSimulationEnabledVariable(UA_Server *server,
     UA_NodeId nodeId;
     UA_StatusCode retval = UA_Server_addVariableNode(
         server,
-        UA_NODEID_NULL,
+        UA_NODEID_STRING(nsIdx, "SimulationEnabled"),
         *parentFolderId,
         UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES),
         UA_QUALIFIEDNAME(nsIdx, "SimulationEnabled"),
@@ -223,7 +245,7 @@ simulationCallback(UA_Server *server, void *data) {
 
     for(size_t i = 0; i < SENSOR_COUNT; ++i) {
         SensorState *state = &ctx->sensors[i];
-        if(state->overridden) {
+        if(state->exemptFromSimulation || state->overridden) {
             continue;
         }
 
@@ -277,13 +299,22 @@ int main(void) {
         return EXIT_FAILURE;
     }
 
-    for(size_t i = 0; i < SENSOR_COUNT; ++i) {
+    for(size_t i = 0; i < SENSOR_COUNT - 1; ++i) {
         retval = addSensorVariable(
-            server, &g_sensorContext, i, nsIdx, &sensorsFolderId);
+            server, &g_sensorContext, i, nsIdx, &sensorsFolderId,
+            NULL, NULL, UA_FALSE);
         if(retval != UA_STATUSCODE_GOOD) {
             UA_Server_delete(server);
             return EXIT_FAILURE;
         }
+    }
+
+    retval = addSensorVariable(
+        server, &g_sensorContext, SENSOR_COUNT - 1, nsIdx, &sensorsFolderId,
+        "Pi1_InductionSwitch1", "Induction Switch 1 (Pi 1)", UA_TRUE);
+    if(retval != UA_STATUSCODE_GOOD) {
+        UA_Server_delete(server);
+        return EXIT_FAILURE;
     }
 
     retval = addSimulationEnabledVariable(
