@@ -3,8 +3,17 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    restart: unless-stopped
     ports:
       - "4840:4840"
+      - "8081:8081"
+    environment:
+      OPCUA_SERVER_CONFIG_PATH: /data/server-config.json
+      OPCUA_HTTP_ADDR: ":8081"
+      OPCUA_HTTP_WEB_ROOT: /app/web
+      OPCUA_NAMESPACE_URI: ${OPCUA_NAMESPACE_URI:-}
+    volumes:
+      - opcua_config:/data
 
   bridge:
     build:
@@ -20,3 +29,6 @@ services:
       OPCUA_NAMESPACE_URI: "urn:binary-sensors-demo"
     depends_on:
       - opcua
+
+volumes:
+  opcua_config:

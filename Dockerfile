@@ -6,6 +6,9 @@ RUN apt-get update && \
     ca-certificates \
     cmake \
     git \
+    pkg-config \
+    libmicrohttpd-dev \
+    libcjson-dev \
     python3 && \
     rm -rf /var/lib/apt/lists/*
 
@@ -29,18 +32,27 @@ RUN cmake -S . -B build && \
 
 FROM debian:stable-slim
 
-RUN useradd -m opcua
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    libmicrohttpd12 \
+    libcjson1 \
+    gosu && \
+    rm -rf /var/lib/apt/lists/* && \
+    useradd -m opcua
 
 WORKDIR /app
 
 COPY --from=build /app/build/opcua_server /usr/local/bin/opcua_server
 COPY --from=build /usr/local/lib/libopen62541.* /usr/local/lib/
+COPY web/opcua-server /app/web/
 
-RUN ldconfig
+COPY docker/opcua-entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh && ldconfig
 
-EXPOSE 4840
+ENV OPCUA_HTTP_WEB_ROOT=/app/web
+ENV OPCUA_SERVER_CONFIG_PATH=/data/server-config.json
+ENV OPCUA_HTTP_ADDR=:8081
 
-USER opcua
+EXPOSE 4840 8081
 
-ENTRYPOINT ["opcua_server"]
-
+ENTRYPOINT ["/entrypoint.sh"]

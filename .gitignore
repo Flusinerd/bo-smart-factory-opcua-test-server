@@ -1,0 +1,4 @@
+build/
+dist-linux64/
+server-config.json
+*.tmp

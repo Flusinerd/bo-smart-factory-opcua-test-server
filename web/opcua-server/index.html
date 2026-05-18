@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OPC UA Server Configuration</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header>
+    <h1>OPC UA Server</h1>
+    <p class="muted">Configure namespace, address space, and simulation. OPC UA endpoint: <code>opc.tcp://&lt;host&gt;:4840</code></p>
+  </header>
+
+  <section class="card">
+    <h2>Namespace</h2>
+    <label>Namespace URI <input type="text" id="namespaceUri" /></label>
+    <div class="row">
+      <button type="button" class="primary" id="btnSaveNs">Save namespace</button>
+      <button type="button" id="btnRestart">Restart server</button>
+    </div>
+    <p class="muted warn" id="nsWarn">Changing the namespace URI requires a server restart.</p>
+  </section>
+
+  <section class="card">
+    <h2>Simulation</h2>
+    <div class="row">
+      <label class="inline"><input type="checkbox" id="simulationEnabled" /> Simulation enabled</label>
+      <button type="button" id="btnResetOverrides">Reset overrides</button>
+    </div>
+    <table class="refs">
+      <thead><tr><th>Sensor</th><th>Value</th><th>Overridden</th></tr></thead>
+      <tbody id="sensorBody"></tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>Address space</h2>
+    <p class="muted">Select a folder row as parent for new nodes. System node <code>SimulationEnabled</code> cannot be deleted.</p>
+    <table class="refs" id="nodeTable">
+      <thead>
+        <tr><th></th><th>Kind</th><th>Browse name</th><th>Display name</th><th>Parent</th><th>Type</th><th>Node ID</th><th></th></tr>
+      </thead>
+      <tbody id="nodeBody"></tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>Add folder</h2>
+    <div class="grid">
+      <label>Parent browse name <input type="text" id="folderParent" placeholder="empty = Objects" /></label>
+      <label>Browse name <input type="text" id="folderBrowse" pattern="[A-Za-z0-9_]+" title="Letters, digits, and underscores only" /></label>
+      <label>Display name <input type="text" id="folderDisplay" /></label>
+    </div>
+    <div class="row"><button type="button" class="primary" id="btnAddFolder">Add folder</button></div>
+  </section>
+
+  <section class="card">
+    <h2>Add variable</h2>
+    <div class="grid">
+      <label>Parent browse name <input type="text" id="varParent" placeholder="Sensors" /></label>
+      <label>Browse name <input type="text" id="varBrowse" pattern="[A-Za-z0-9_]+" title="Letters, digits, and underscores only" /></label>
+      <label>Display name <input type="text" id="varDisplay" /></label>
+      <label>Data type
+        <select id="varType">
+          <option value="Boolean">Boolean</option>
+          <option value="Int32">Int32</option>
+          <option value="Double">Double</option>
+          <option value="String">String</option>
+        </select>
+      </label>
+    </div>
+    <div class="row">
+      <label class="inline"><input type="checkbox" id="varSimulation" /> Include in simulation (Boolean only)</label>
+      <button type="button" class="primary" id="btnAddVar">Add variable</button>
+    </div>
+  </section>
+
+  <div id="statusLine" class="status"></div>
+  <script src="/app.js"></script>
+</body>
+</html>

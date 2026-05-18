@@ -9,6 +9,10 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(open62541 REQUIRED)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(MHD REQUIRED IMPORTED_TARGET libmicrohttpd)
+pkg_check_modules(CJSON REQUIRED IMPORTED_TARGET libcjson)
+
 find_package(Qt6 COMPONENTS Widgets Network QUIET)
 
 include(FetchContent)
@@ -22,11 +26,17 @@ FetchContent_MakeAvailable(msgpackc)
 
 add_executable(opcua_server
     src/opcua_server.c
+    src/server_config.c
+    src/node_manager.c
+    src/http_server.c
 )
 
 target_link_libraries(opcua_server
     PRIVATE
         open62541::open62541
+        PkgConfig::MHD
+        PkgConfig::CJSON
+        pthread
 )
 
 add_executable(opcua_tcp_bridge

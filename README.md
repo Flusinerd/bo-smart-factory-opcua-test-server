@@ -15,16 +15,44 @@ default and can be overridden manually by an OPC UA client.
 - **Reset overrides**: Writing `true` to the `ResetOverrides` variable clears
   all overrides and resumes simulation for all sensors.
 
+### Configuration web UI
+
+The server exposes an HTTP configuration UI (default port **8081**):
+
+- **Namespace URI** — persisted to config; restart the server to apply.
+- **Address space** — add folders and variables (Boolean, Int32, Double, String) under any parent folder; changes apply immediately and persist across restarts.
+- **Simulation** — enable/disable auto-toggling, reset manual overrides on simulated Boolean sensors.
+
+Open [http://localhost:8081](http://localhost:8081) after starting the server.
+
+| Variable | Meaning |
+|----------|---------|
+| `OPCUA_SERVER_CONFIG_PATH` | Path to server config JSON (default `./server-config.json`, Docker: `/data/server-config.json`) |
+| `OPCUA_NAMESPACE_URI` | Override namespace URI from environment |
+| `OPCUA_HTTP_ADDR` | HTTP listen address (default `:8081`) |
+| `OPCUA_HTTP_WEB_ROOT` | Static web assets directory (Docker: `/app/web`) |
+
+The TCP bridge is a **standalone** program with its own UI on port 8080. Point it at `opc.tcp://<host>:4840` and browse to map newly added server nodes.
+
 ### Build and run with Docker
 
 From the project root:
 
 ```bash
 docker build -t opcua-binary-sensors .
-docker run --rm -p 4840:4840 opcua-binary-sensors
+docker run --rm -p 4840:4840 -p 8081:8081 \
+  -v opcua_data:/data \
+  -e OPCUA_SERVER_CONFIG_PATH=/data/server-config.json \
+  opcua-binary-sensors
 ```
 
-The server will listen on `opc.tcp://0.0.0.0:4840`.
+Or with Compose (server only):
+
+```bash
+docker compose up opcua --build
+```
+
+The server listens on `opc.tcp://0.0.0.0:4840`. Configuration persists in the `opcua_config` volume.
 
 ### Connect with an OPC UA client
 
@@ -40,15 +68,14 @@ The server will listen on `opc.tcp://0.0.0.0:4840`.
 
 ### Local build (without Docker)
 
-You can also build the server locally if you have `libopen62541-dev` and a basic
-C toolchain installed:
+Install dependencies (macOS example):
 
 ```bash
-brew install open62541
-cd build
+brew install open62541 libmicrohttpd cjson pkg-config
+mkdir -p build && cd build
 cmake ..
 cmake --build . --config Release
-./opcua_server
+OPCUA_HTTP_WEB_ROOT=../web/opcua-server ./opcua_server
 ```
 
 ## OPC UA TCP Bridge
